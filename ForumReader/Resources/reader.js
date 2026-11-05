@@ -55,7 +55,8 @@
         return {
           author: firstText(r, ['.postShowUserDiv b', '.postShowUserDiv']),
           date: info ? firstText(info, ['.date a[name]', '.date']) : '',
-          body: firstEl(r, ['[id^="post_text_"] .postbody td', '[id^="post_text_"]'])
+          body: firstEl(r, ['[id^="post_text_"] .postbody td', '[id^="post_text_"]']),
+          quote: info ? $('a[href*="/posts/quote/"]', info) : null
         };
       }),
       list: () => $$('.topic-list').map(r => {
@@ -122,7 +123,8 @@
       thread: () => $$('div.post').map(p => ({
         author: firstText(p, ['.author .username', '.author .username-coloured', '.postprofile .username', '.postprofile .username-coloured']),
         date: dateOf(p, ['.author time']) || firstText(p, ['p.author']).replace(/^.*»\s*/, ''),
-        body: firstEl(p, ['.postbody .content', '.content'])
+        body: firstEl(p, ['.postbody .content', '.content']),
+        quote: $('a[href*="mode=quote"]', p)
       })),
       list: () => $$('ul.topiclist.topics li.row, ul.topiclist li.row').map(r => {
         const a = $('a.topictitle', r);
@@ -137,7 +139,8 @@
       thread: () => $$('li.postcontainer, .postbitlegacy, .b-post').map(p => ({
         author: firstText(p, ['.username', '.b-post__author a', '.author a']),
         date: dateOf(p, ['time']) || firstText(p, ['.postdate .date', '.date']),
-        body: firstEl(p, ['.postcontent', '.js-post__content-text', '.post-content'])
+        body: firstEl(p, ['.postcontent', '.js-post__content-text', '.post-content']),
+        quote: $('a[href*="newreply.php"][href*="p="]', p)
       })),
       list: () => $$('li.threadbit, .topic-list-item, tr.topic-item').map(r => {
         const a = firstEl(r, ['a.title', 'a.topic-title', 'h3 a']);
@@ -152,7 +155,8 @@
       thread: () => $$('#forumposts .post_wrapper').map(p => ({
         author: firstText(p, ['.poster h4 a', '.poster h4']),
         date: firstText(p, ['.keyinfo .smalltext', '.postinfo .smalltext']).replace(/^.*?on:\s*/i, ''),
-        body: firstEl(p, ['.inner', '.post'])
+        body: firstEl(p, ['.inner', '.post']),
+        quote: $('a[href*="quote="]', p)
       })),
       list: () => $$('#messageindex .subject, #messageindex td.subject').map(r => {
         const a = $('a', r);
@@ -359,6 +363,90 @@
     }
   }
 
+
+  // ---- Posting ------------------------------------------------------------
+  // Replies always go through the site's own form (so logins, captchas and
+  // anti-spam tokens keep working); the clean view just presents it.
+  const isRealLink = a => a && a.getAttribute('href') && !/^(#|javascript:)/i.test(a.getAttribute('href'));
+
+  // The page's form for writing a post: a POST form with a message box.
+  function findPostForm() {
+    const forms = $$('form').filter(f => {
+      if ((f.getAttribute('method') || '').toLowerCase() !== 'post') return false;
+      if (/search|login|log-in|signin|register/i.test((f.getAttribute('action') || '') + ' ' + f.id + ' ' + f.className)) return false;
+      return !!$('textarea, [contenteditable="true"]', f);
+    });
+    const size = f => { const t = $('textarea', f); return t ? (t.rows || 2) * (t.cols || 20) + 1000 : 500; };
+    return forms.sort((a, b) => size(b) - size(a))[0] || null;
+  }
+
+  // A plain textarea form can be moved into the clean view and still work;
+  // rich editors (XenForo, Invision) can't, so those use the original page.
+  const isPlainForm = f => !!$('textarea', f) && !$('[contenteditable="true"], iframe, .fr-box, .ck-editor', f);
+
+  function replyLink() {
+    return $$('a[href]').find(a => isRealLink(a) && /^(post )?reply( to (this )?(thread|topic))?$/i.test(text(a))) || null;
+  }
+
+  let formHome = null, movedForm = null, replySlot = null;
+  function placeForm(inReader) {
+    if (!movedForm || !replySlot) return;
+    if (inReader) replySlot.appendChild(movedForm);
+    else if (formHome && formHome.parentNode) formHome.parentNode.insertBefore(movedForm, formHome);
+  }
+
+  function addReplySection(root) {
+    const form = findPostForm();
+    const section = el('section', 'fr-reply');
+    if (form && isPlainForm(form)) {
+      section.appendChild(el('h2', null, 'Reply'));
+      replySlot = el('div', 'fr-replyform');
+      section.appendChild(replySlot);
+      formHome = document.createComment('fr-form-home');
+      form.parentNode.insertBefore(formHome, form);
+      movedForm = form;
+    } else {
+      const link = replyLink();
+      if (link) {
+        section.innerHTML = `<a class="fr-btn" href="${esc(link.href)}">Reply</a>`;
+      } else if (form) {
+        const b = el('a', 'fr-btn', 'Reply');
+        b.href = '#';
+        b.addEventListener('click', e => {
+          e.preventDefault();
+          FR.setEnabled(false);
+          post({ type: 'readerToggled', on: false, temporary: true });
+          setTimeout(() => { form.scrollIntoView({ block: 'center' }); const box = $('[contenteditable="true"], textarea', form); if (box) box.focus(); }, 60);
+        });
+        section.appendChild(b);
+      } else return;
+    }
+    root.appendChild(section);
+  }
+
+  // On a reply or quote page, show just the posting form, with a Cancel link.
+  function compose() {
+    const form = findPostForm();
+    // Only on pages that are about writing a post, so a stray form elsewhere
+    // (a shoutbox on the forum index, say) doesn't take over the page.
+    if (!form || !/reply|post|quote|new|create|add|edit|compose|message/i.test(location.pathname + location.search)) return null;
+    let n = form;
+    while (n && n !== document.body) {
+      for (const sib of Array.from(n.parentNode ? n.parentNode.children : [])) if (sib !== n && sib.tagName !== 'SCRIPT') sib.classList.add('fr-hide');
+      n = n.parentNode;
+    }
+    form.classList.add('fr-composeform');
+    const bar = el('div', 'fr-composebar', `<b>${esc(pageTitle())}</b>`);
+    const cancel = el('a', null, 'Cancel');
+    cancel.href = '#';
+    cancel.addEventListener('click', e => { e.preventDefault(); history.back(); });
+    bar.appendChild(cancel);
+    form.parentNode.insertBefore(bar, form);
+    const box = $('textarea', form);
+    if (box && FR.enabled) setTimeout(() => { const v = box.value; box.focus(); box.setSelectionRange(v.length, v.length); }, 300);
+    return { adapter: 'form', kind: 'compose' };
+  }
+
   // ---- Building the clean view ------------------------------------------
   const READER_CSS = `
     html.fr-on body > *:not(#fr-reader) { display: none !important; }
@@ -402,6 +490,33 @@
       border: 1px solid var(--fr-line); text-decoration: none; font-size: .9em; }
     #fr-reader .fr-pages span.fr-off { opacity: .35; }
     #fr-reader .fr-pages .fr-cur { border: none; background: none; color: var(--fr-muted); }
+    #fr-reader .fr-quote { margin-left: 8px; font-size: .95em; text-decoration: none; }
+    #fr-reader .fr-num:empty { display: none; }
+    #fr-reader .fr-num:empty + .fr-quote { margin-left: auto; }
+    #fr-reader .fr-reply { margin: 16px 0 0; }
+    #fr-reader .fr-reply h2 { font-size: 1em; margin: 0 4px 8px; }
+    #fr-reader .fr-btn { display: block; text-align: center; padding: 12px; border-radius: 12px; background: var(--fr-accent);
+      color: #fff !important; font-weight: 600; text-decoration: none; }
+    #fr-reader .fr-replyform form, html.fr-compose .fr-composeform { background: var(--fr-card); border: 1px solid var(--fr-line);
+      border-radius: 12px; padding: 12px; margin: 0; }
+    #fr-reader .fr-replyform textarea, html.fr-compose .fr-composeform textarea { width: 100% !important; box-sizing: border-box;
+      min-height: 9em; font: 17px/1.45 -apple-system, system-ui, sans-serif; padding: 10px; border-radius: 9px;
+      border: 1px solid var(--fr-line); background: var(--fr-bg); color: var(--fr-text); }
+    #fr-reader .fr-replyform input[type="submit"], html.fr-compose .fr-composeform input[type="submit"],
+    html.fr-compose .fr-composeform button[type="submit"] { -webkit-appearance: none; font: 600 16px -apple-system, system-ui, sans-serif;
+      padding: 10px 22px; border-radius: 10px; border: none; background: var(--fr-accent); color: #fff; margin-top: 10px; }
+    html.fr-compose .fr-hide { display: none !important; }
+    html.fr-compose, html.fr-compose body { background: var(--fr-bg) !important; }
+    html.fr-compose body { margin: 0 !important; padding: 12px !important; }
+    html.fr-compose .fr-composeform textarea { min-height: 45vh; }
+    .fr-composebar { display: none; }
+    html.fr-compose .fr-composebar { display: flex; justify-content: space-between; align-items: baseline; gap: 12px;
+      font: 16px/1.35 -apple-system, system-ui, sans-serif; color: var(--fr-text); margin: 4px 2px 12px; }
+    html.fr-compose .fr-composebar a { color: var(--fr-accent); white-space: nowrap; }
+    html.fr-compose { --fr-bg: #f7f5f0; --fr-card: #ffffff; --fr-text: #1d1d1f; --fr-line: #e3e0d8; --fr-accent: #0a66c2; }
+    @media (prefers-color-scheme: dark) {
+      html.fr-compose { --fr-bg: #121214; --fr-card: #1c1c1f; --fr-text: #ececf0; --fr-line: #2c2c31; --fr-accent: #5aa9ff; }
+    }
     #fr-reader .fr-orig, #fr-reader .fr-markall { display: block; text-align: center; font-size: .85em; margin-top: 18px; }
     #fr-reader .fr-item.fr-unread a { font-weight: 700; }
     #fr-reader .fr-item.fr-unread a::before { content: ''; display: inline-block; width: 8px; height: 8px; border-radius: 4px;
@@ -462,6 +577,11 @@
         // Numbers are made thread-wide by trackThread when it knows the page size.
         card.appendChild(el('div', 'fr-head',
           `<b>${esc(p.author || 'Unknown')}</b><span>${esc(p.date || '')}</span><span class="fr-num">${numbered ? '#' + (i + 1) : ''}</span>`));
+        if (isRealLink(p.quote)) {
+          const q = el('a', 'fr-quote', 'Quote');
+          q.href = p.quote.href;
+          card.firstChild.appendChild(q);
+        }
         const body = el('div', 'fr-body');
         body.appendChild(cleanBody(p.body));
         card.appendChild(body);
@@ -476,7 +596,8 @@
     const bottom = pagesBar(pages);
     if (bottom) root.appendChild(bottom);
     try { found.kind === 'thread' ? trackThread(root, found, pages) : trackList(root, found); } catch (e) {}
-    const orig = el('a', 'fr-orig', 'Show original page (to reply, log in or search)');
+    if (found.kind === 'thread') try { addReplySection(root); } catch (e) {}
+    const orig = el('a', 'fr-orig', 'Show original page');
     orig.href = '#';
     orig.addEventListener('click', e => { e.preventDefault(); FR.setEnabled(false); post({ type: 'readerToggled', on: false }); });
     root.appendChild(orig);
@@ -496,25 +617,37 @@
     setEnabled(on) {
       this.enabled = on;
       if (on && !this.result) this.run();
-      document.documentElement.classList.toggle('fr-on', !!(on && this.result));
+      const kind = this.result && this.result.kind;
+      document.documentElement.classList.toggle('fr-on', !!(on && this.result && kind !== 'compose'));
+      document.documentElement.classList.toggle('fr-compose', !!(on && kind === 'compose'));
+      placeForm(on);
       if (on && this.result) window.scrollTo(0, 0);
     },
     run() {
       addStyle('fr-ad-css', AD_CSS);
       if (this.result) return;
       const r = build();
+      if (!r) {
+        const c = compose();
+        if (c) {
+          addStyle('fr-reader-css', READER_CSS);
+          this.result = c;
+          document.documentElement.classList.toggle('fr-compose', this.enabled);
+        }
+      }
       if (r) {
         addStyle('fr-reader-css', READER_CSS);
         document.body.appendChild(r.root);
         this.result = r.found;
         document.documentElement.classList.toggle('fr-on', this.enabled);
+        placeForm(this.enabled);
         if (this.enabled && this.jumpTo && !location.hash) {
           const target = this.jumpTo;
           setTimeout(() => target.scrollIntoView({ block: 'start' }), 50);
         }
       }
       post({ type: 'page', available: !!this.result, kind: this.result ? this.result.kind : null,
-             adapter: this.result ? this.result.adapter : null, count: this.result ? (this.result.posts || this.result.items).length : 0 });
+             adapter: this.result ? this.result.adapter : null, count: this.result ? (this.result.posts || this.result.items || []).length : 0 });
     }
   };
 

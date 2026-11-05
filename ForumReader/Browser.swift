@@ -99,6 +99,7 @@ final class BrowserModel: NSObject, ObservableObject {
         readerOn = on
         installScripts() // so later pages follow the new setting
         webView.evaluateJavaScript("window.__fr && window.__fr.setEnabled(\(on))")
+        forum.cleanView = on
         save(forum.id) { $0.cleanView = on }
     }
 
@@ -125,8 +126,13 @@ final class BrowserModel: NSObject, ObservableObject {
         case "readerToggled":
             let on = msg["on"] as? Bool ?? false
             readerOn = on
-            installScripts()
-            save(forum.id) { $0.cleanView = on }
+            // "Reply" on a site with a rich editor shows the original page for
+            // just this page; the forum's setting stays as it was.
+            if msg["temporary"] as? Bool != true {
+                forum.cleanView = on
+                installScripts()
+                save(forum.id) { $0.cleanView = on }
+            }
         default:
             break
         }
@@ -136,6 +142,7 @@ final class BrowserModel: NSObject, ObservableObject {
 extension BrowserModel: WKNavigationDelegate, WKUIDelegate {
     func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) {
         readerAvailable = false
+        readerOn = forum.cleanView
     }
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {

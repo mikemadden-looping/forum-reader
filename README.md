@@ -11,6 +11,12 @@ by their web address; each one opens in its own browser with:
   page buttons (« ‹ Prev · Page 3 of 12 · Next › »). Tap the reader button in
   the toolbar, or "Show original page" at the bottom, to switch back to the
   real page to reply, log in or search.
+- **Posting in the same view** — the site's own reply box sits under the
+  posts, each post has a Quote link, and the site's reply and quote pages show
+  just the form, in large text, with Cancel. Posting still goes through the
+  site's form, so logins and anti-spam checks work. Sites with rich editors
+  (XenForo, Invision) get a Reply button that opens the original page at the
+  reply box for that one page.
 - **Remembers what you've read**, with no account needed. In clean-view topic
   lists, threads you haven't opened are bold with a dot, threads with new
   replies show "+5 new" and open at the page with the first new post (marked
