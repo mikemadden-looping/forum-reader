@@ -19,6 +19,13 @@
     return text(el);
   };
   const dateOf = (root, sels) => { for (const s of sels) { const e = $(s, root); if (e && fmtDate(e)) return fmtDate(e); } return ''; };
+  // "1,234" -> 1234, "2.6k" -> 2600; null when there's no number.
+  const count = t => {
+    const m = (t || '').replace(/,/g, '').match(/(\d+(?:\.\d+)?)\s*([kKmM])?/);
+    if (!m) return null;
+    const n = parseFloat(m[1]) * (m[2] ? ({ k: 1e3, m: 1e6 })[m[2].toLowerCase()] : 1);
+    return Math.round(n);
+  };
   const replies = t => { const m = (t || '').match(/(\d[\d.,]*\s*[kKmM]?)/); return m ? m[1].trim() + ' replies' : ''; };
   const post = msg => { try { window.webkit.messageHandlers.fr.postMessage(msg); } catch (e) {} };
 
@@ -37,7 +44,7 @@
   `;
 
   // ---- Platform adapters -------------------------------------------------
-  // thread() -> [{author, date, body}] ; list() -> [{title, href, meta}]
+  // thread() -> [{author, date, body}] ; list() -> [{title, href, meta, n (reply count), unread (site says so)}]
   const adapters = [
     {
       name: 'jforum',
@@ -59,7 +66,8 @@
         const ans = text($('.answers', r));
         const m = ans.match(/Replies:?\s*(\d[\d,]*)/i) || ans.match(/^(\d[\d,]*)$/);
         return {
-          title: text(a), href: a.href,
+          title: text(a), href: a.href, n: m ? count(m[1]) : null,
+          unread: !!$('[class*="folder_new"], img[src*="_new"]', r),
           meta: [forum, m ? m[1] + ' replies' : '', last ? 'last: ' + last : '']
             .filter(Boolean).join(' · ')
         };
@@ -79,6 +87,7 @@
         const last = dateOf(r, ['.structItem-latestDate']);
         return {
           title: text(a), href: a.href,
+          n: count(firstText(r, ['.structItem-cell--meta dd'])), unread: r.classList.contains('is-unread'),
           meta: [firstText(r, ['.structItem-minor .username', '.username']),
                  replies(firstText(r, ['.structItem-cell--meta dd'])),
                  last ? 'last: ' + last : '']
@@ -97,8 +106,10 @@
       list: () => $$('li[data-rowid], .ipsDataItem, .ipsData__item').map(r => {
         const a = firstEl(r, ['.ipsDataItem_title a[href*="/topic/"]', '.ipsData__title a', 'h4 a[href*="/topic/"]', 'a[href*="/topic/"]']);
         if (!a || !text(a)) return null;
+        const rc = firstText(r, ['[data-stattype="forums_comments"] .ipsData__stats-label', '.ipsDataItem_stats_number', '[data-stattype="forums_comments"]']);
         return {
-          title: text(a), href: a.href,
+          title: text(a), href: a.href, n: /topic\//.test(a.href) ? count(rc) : null,
+          unread: r.matches('.ipsDataItem_unread, .ipsData__item--unread, [data-ips-unread]'),
           meta: [replies(firstText(r, ['[data-stattype="forums_comments"] .ipsData__stats-label', '.ipsDataItem_stats_number', '[data-stattype="forums_comments"]'])),
                  dateOf(r, ['.ipsDataItem_lastPoster time', '.ipsData__last time', 'time'])]
             .filter(Boolean).join(' · ')
@@ -116,7 +127,8 @@
       list: () => $$('ul.topiclist.topics li.row, ul.topiclist li.row').map(r => {
         const a = $('a.topictitle', r);
         if (!a) return null;
-        return { title: text(a), href: a.href, meta: [replies(firstText(r, ['dd.posts'])), dateOf(r, ['dd.lastpost time']) || firstText(r, ['dd.lastpost'])].filter(Boolean).join(' · ') };
+        return { title: text(a), href: a.href, n: count(firstText(r, ['dd.posts'])), unread: !!$('dl[class*="unread"]', r) || /unread/.test(r.className),
+          meta: [replies(firstText(r, ['dd.posts'])), dateOf(r, ['dd.lastpost time']) || firstText(r, ['dd.lastpost'])].filter(Boolean).join(' · ') };
       })
     },
     {
@@ -130,7 +142,8 @@
       list: () => $$('li.threadbit, .topic-list-item, tr.topic-item').map(r => {
         const a = firstEl(r, ['a.title', 'a.topic-title', 'h3 a']);
         if (!a) return null;
-        return { title: text(a), href: a.href, meta: firstText(r, ['.threadlastpost', '.lastpost']) };
+        return { title: text(a), href: a.href, n: count(firstText(r, ['.threadstats li', '.replies', '.posts-count'])),
+          unread: /\b(new|unread)\b/.test(r.className), meta: firstText(r, ['.threadlastpost', '.lastpost']) };
       })
     },
     {
@@ -204,6 +217,148 @@
     return c;
   }
 
+
+  // ---- Read tracking ----------------------------------------------------
+  // Kept in each site's own localStorage (which the app's web view keeps
+  // between launches): for every thread, how many posts you've read through.
+  const RKEY = 'fr-read-v1';
+  const readStore = {
+    load() {
+      let d = {};
+      try { d = JSON.parse(localStorage.getItem(RKEY) || '{}') || {}; } catch (e) {}
+      d.t = d.t || {}; d.per = d.per || {};
+      return d;
+    },
+    save(d) {
+      try {
+        const keys = Object.keys(d.t);
+        if (keys.length > 4000) keys.sort((a, b) => d.t[a].at - d.t[b].at).slice(0, keys.length - 3500).forEach(k => delete d.t[k]);
+        localStorage.setItem(RKEY, JSON.stringify(d));
+      } catch (e) {}
+    }
+  };
+  const DEFAULT_PER = { jforum: 15, xenforo: 20, invision: 25, phpbb: 25, vb: 20, smf: 20 };
+
+  // Which thread a URL points at, independent of page: {id, kind, base, page|offset}.
+  function threadRef(href) {
+    let u;
+    try { u = new URL(href, location.href); } catch (e) { return null; }
+    const p = u.pathname.replace(/;jsessionid=[^/]*/i, ''), q = u.searchParams, o = u.origin;
+    let m;
+    if ((m = p.match(/^(.*\/posts\/list\/)(?:(\d+)\/)?(\d+)\.page$/)))
+      return { id: 'j' + m[3], kind: 'jforum', origin: o, prefix: m[1], tid: m[3], offset: m[2] ? +m[2] : 0 };
+    if ((m = p.match(/^(.*\/threads\/(?:[^/]*\.)?(\d+))(?:\/(?:page-(\d+))?)?\/?$/)))
+      return { id: 'x' + m[2], kind: 'xenforo', origin: o, base: m[1], page: m[3] ? +m[3] : 1 };
+    if ((m = p.match(/^(.*\/topic\/(\d+)[^/]*)(?:\/(?:page\/(\d+))?)?\/?$/)))
+      return { id: 'i' + m[2], kind: 'invision', origin: o, base: m[1], page: m[3] ? +m[3] : 1 };
+    if (/viewtopic\.php$/.test(p) && q.get('t'))
+      return { id: 'p' + q.get('t'), kind: 'phpbb', origin: o, base: p + '?t=' + q.get('t'), offset: +(q.get('start') || 0) };
+    if (/showthread\.php$/.test(p) && q.get('t'))
+      return { id: 'v' + q.get('t'), kind: 'vb', origin: o, base: p + '?t=' + q.get('t'), page: +(q.get('page') || 1) };
+    if (q.get('topic')) {
+      const [t, off] = q.get('topic').split('.');
+      return { id: 's' + t, kind: 'smf', origin: o, base: p + '?topic=' + t, offset: +(off || 0) };
+    }
+    return null;
+  }
+
+  function pageURL(ref, n, per) {
+    const off = (n - 1) * per;
+    switch (ref.kind) {
+      case 'jforum': return ref.origin + ref.prefix + (n > 1 ? off + '/' : '') + ref.tid + '.page';
+      case 'xenforo': return ref.origin + ref.base + '/' + (n > 1 ? 'page-' + n : '');
+      case 'invision': return ref.origin + ref.base + '/' + (n > 1 ? 'page/' + n + '/' : '');
+      case 'phpbb': return ref.origin + ref.base + (n > 1 ? '&start=' + off : '');
+      case 'vb': return ref.origin + ref.base + (n > 1 ? '&page=' + n : '');
+      case 'smf': return ref.origin + ref.base + '.' + off;
+    }
+    return null;
+  }
+
+  // Posts per page: from the offset in the page-2 link where the site uses
+  // offsets, otherwise from a full (non-last) page, otherwise remembered.
+  function postsPerPage(ref, onPage, pages, d) {
+    let per = null;
+    if ('offset' in ref) {
+      const offs = $$('a[href]').map(a => threadRef(a.href)).filter(r => r && r.id === ref.id && r.offset > 0).map(r => r.offset);
+      if (ref.offset > 0) offs.push(ref.offset);
+      if (offs.length && pages) {
+        // The smallest offset is page 2's, unless we're on page 2 and it isn't linked.
+        const min = Math.min(...offs);
+        per = pages.current === 2 && ref.offset === min ? ref.offset : min;
+      } else if (offs.length) per = Math.min(...offs);
+    } else if (pages && pages.current < pages.last) {
+      per = onPage;
+    }
+    if (per) d.per[ref.kind] = per;
+    return per || d.per[ref.kind] || DEFAULT_PER[ref.kind] || 20;
+  }
+
+  function trackThread(root, found, pages) {
+    const ref = threadRef(location.href);
+    if (!ref) return;
+    const d = readStore.load();
+    const cards = $$('.fr-post', root);
+    const per = postsPerPage(ref, cards.length, pages, d);
+    const page = (pages && pages.current) || ref.page || (ref.offset ? Math.round(ref.offset / per) + 1 : 1);
+    const first = (page - 1) * per; // posts before this page
+    const before = (d.t[ref.id] || {}).seen || 0;
+    cards.forEach((c, i) => {
+      const num = $('.fr-num', c);
+      if (num) num.textContent = '#' + (first + i + 1);
+    });
+    const firstNew = before > 0 ? cards.find((c, i) => first + i + 1 > before) : null;
+    if (firstNew) {
+      firstNew.classList.add('fr-new');
+      firstNew.parentNode.insertBefore(el('div', 'fr-newline', 'New since you last read'), firstNew);
+      FR.jumpTo = firstNew.previousElementSibling;
+    }
+    d.t[ref.id] = { seen: Math.max(before, first + cards.length), at: Date.now() };
+    readStore.save(d);
+  }
+
+  function trackList(root, found) {
+    const d = readStore.load();
+    const links = $$('.fr-item', root);
+    const marks = [];
+    found.items.forEach((it, i) => {
+      const card = links[i], a = card && $('a', card);
+      const ref = a && threadRef(it.href);
+      if (!ref) return;
+      const rec = d.t[ref.id];
+      const total = it.n != null ? it.n + 1 : null; // replies + the opening post
+      if (!rec) {
+        card.classList.add('fr-unread');
+      } else if (total != null && total > rec.seen) {
+        card.classList.add('fr-unread');
+        a.insertAdjacentHTML('beforeend', ` <span class="fr-badge">+${total - rec.seen} new</span>`);
+        // Open at the page holding the first post you haven't read.
+        const per = d.per[ref.kind] || DEFAULT_PER[ref.kind] || 20;
+        const n = Math.floor(rec.seen / per) + 1;
+        if (n > 1) { const u = pageURL(ref, n, per); if (u) a.href = u; }
+      } else if (it.unread && total == null) {
+        card.classList.add('fr-unread');
+      } else {
+        card.classList.add('fr-read');
+      }
+      if (total != null) marks.push([ref.id, total]);
+    });
+    if (marks.length) {
+      const all = el('a', 'fr-markall', 'Mark all on this page as read');
+      all.href = '#';
+      all.addEventListener('click', e => {
+        e.preventDefault();
+        const d2 = readStore.load();
+        marks.forEach(([id, total]) => { d2.t[id] = { seen: Math.max(total, (d2.t[id] || {}).seen || 0), at: Date.now() }; });
+        readStore.save(d2);
+        $$('.fr-item', root).forEach(c => { c.classList.remove('fr-unread'); c.classList.add('fr-read'); });
+        $$('.fr-badge', root).forEach(b => b.remove());
+        all.remove();
+      });
+      root.appendChild(all);
+    }
+  }
+
   // ---- Building the clean view ------------------------------------------
   const READER_CSS = `
     html.fr-on body > *:not(#fr-reader) { display: none !important; }
@@ -247,7 +402,16 @@
       border: 1px solid var(--fr-line); text-decoration: none; font-size: .9em; }
     #fr-reader .fr-pages span.fr-off { opacity: .35; }
     #fr-reader .fr-pages .fr-cur { border: none; background: none; color: var(--fr-muted); }
-    #fr-reader .fr-orig { display: block; text-align: center; font-size: .85em; margin-top: 18px; }
+    #fr-reader .fr-orig, #fr-reader .fr-markall { display: block; text-align: center; font-size: .85em; margin-top: 18px; }
+    #fr-reader .fr-item.fr-unread a { font-weight: 700; }
+    #fr-reader .fr-item.fr-unread a::before { content: ''; display: inline-block; width: 8px; height: 8px; border-radius: 4px;
+      background: var(--fr-accent); margin-right: 7px; vertical-align: 2px; }
+    #fr-reader .fr-item.fr-read a { font-weight: 500; color: var(--fr-muted); }
+    #fr-reader .fr-badge { display: inline-block; font-size: .72em; font-weight: 700; color: #fff; background: var(--fr-accent);
+      border-radius: 9px; padding: 1px 7px; margin-left: 4px; vertical-align: 2px; }
+    #fr-reader .fr-post.fr-new { border-color: var(--fr-accent); }
+    #fr-reader .fr-newline { text-align: center; color: var(--fr-accent); font-size: .8em; font-weight: 700; margin: 6px 0 8px;
+      scroll-margin-top: 8px; }
   `;
 
   function el(tag, cls, html) { const e = document.createElement(tag); if (cls) e.className = cls; if (html != null) e.innerHTML = html; return e; }
@@ -295,8 +459,9 @@
       const numbered = !(pages && pages.current > 1);
       found.posts.forEach((p, i) => {
         const card = el('article', 'fr-post');
+        // Numbers are made thread-wide by trackThread when it knows the page size.
         card.appendChild(el('div', 'fr-head',
-          `<b>${esc(p.author || 'Unknown')}</b><span>${esc(p.date || '')}</span>` + (numbered ? `<span class="fr-num">#${i + 1}</span>` : '')));
+          `<b>${esc(p.author || 'Unknown')}</b><span>${esc(p.date || '')}</span><span class="fr-num">${numbered ? '#' + (i + 1) : ''}</span>`));
         const body = el('div', 'fr-body');
         body.appendChild(cleanBody(p.body));
         card.appendChild(body);
@@ -310,6 +475,7 @@
     }
     const bottom = pagesBar(pages);
     if (bottom) root.appendChild(bottom);
+    try { found.kind === 'thread' ? trackThread(root, found, pages) : trackList(root, found); } catch (e) {}
     const orig = el('a', 'fr-orig', 'Show original page (to reply, log in or search)');
     orig.href = '#';
     orig.addEventListener('click', e => { e.preventDefault(); FR.setEnabled(false); post({ type: 'readerToggled', on: false }); });
@@ -342,6 +508,10 @@
         document.body.appendChild(r.root);
         this.result = r.found;
         document.documentElement.classList.toggle('fr-on', this.enabled);
+        if (this.enabled && this.jumpTo && !location.hash) {
+          const target = this.jumpTo;
+          setTimeout(() => target.scrollIntoView({ block: 'start' }), 50);
+        }
       }
       post({ type: 'page', available: !!this.result, kind: this.result ? this.result.kind : null,
              adapter: this.result ? this.result.adapter : null, count: this.result ? (this.result.posts || this.result.items).length : 0 });

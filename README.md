@@ -11,6 +11,13 @@ by their web address; each one opens in its own browser with:
   page buttons (« ‹ Prev · Page 3 of 12 · Next › »). Tap the reader button in
   the toolbar, or "Show original page" at the bottom, to switch back to the
   real page to reply, log in or search.
+- **Remembers what you've read**, with no account needed. In clean-view topic
+  lists, threads you haven't opened are bold with a dot, threads with new
+  replies show "+5 new" and open at the page with the first new post (marked
+  "New since you last read"), and threads you're caught up on are dimmed.
+  "Mark all on this page as read" is at the bottom of each list. The history
+  is kept on the phone, per site; on forums where you're logged in, the
+  site's own unread marks are used too.
 - **Picks up where you left off** in each forum; Home goes back to the address
   you added.
 
