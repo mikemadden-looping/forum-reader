@@ -1,0 +1,10 @@
+*.xcodeproj/
+ForumReader/Info.plist
+build/
+buildlog/
+*.ipa
+*.dSYM.zip
+*.mobileprovision
+fastlane/report.xml
+fastlane/README.md
+.DS_Store
