@@ -82,7 +82,14 @@ final class BrowserModel: NSObject, ObservableObject {
     private func installScripts() {
         let controller = webView.configuration.userContentController
         controller.removeAllUserScripts()
-        controller.addUserScript(WKUserScript(source: "window.__FR_CLEAN = \(readerOn);",
+        // With clean view on, keep the page hidden until reader.js has decided
+        // how to show it, so the full site never flashes up first.
+        let pending = readerOn ? """
+            document.documentElement.classList.add('fr-pending');
+            (function(){var s=document.createElement('style');s.textContent='html.fr-pending body{visibility:hidden!important}';
+            (document.head||document.documentElement).appendChild(s);})();
+            """ : ""
+        controller.addUserScript(WKUserScript(source: "window.__FR_CLEAN = \(readerOn);" + pending,
                                               injectionTime: .atDocumentStart, forMainFrameOnly: true))
         controller.addUserScript(WKUserScript(source: Self.readerSource,
                                               injectionTime: .atDocumentEnd, forMainFrameOnly: true))

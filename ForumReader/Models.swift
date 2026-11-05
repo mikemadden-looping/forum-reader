@@ -6,7 +6,7 @@ struct Forum: Codable, Identifiable, Hashable {
     var name: String
     var url: URL
     /// Page zoom, like Safari's aA setting. 1.0 = the site's own size.
-    var zoom: Double = 1.25
+    var zoom: Double = 1.0
     /// Lay recognised threads and topic lists out as a clean column.
     var cleanView: Bool = true
     var blockAds: Bool = true
@@ -42,6 +42,13 @@ final class ForumStore: ObservableObject {
         if let data = UserDefaults.standard.data(forKey: key),
            let saved = try? JSONDecoder().decode([Forum].self, from: data) {
             forums = saved
+            // Build 1 started forums at 125%, which was too big with the clean
+            // view's own larger text. Move anything still at that default to 100%.
+            if !UserDefaults.standard.bool(forKey: "zoomMigrated.v2") {
+                for i in forums.indices where abs(forums[i].zoom - 1.25) < 0.001 { forums[i].zoom = 1.0 }
+                UserDefaults.standard.set(true, forKey: "zoomMigrated.v2")
+                save()
+            }
         }
     }
 

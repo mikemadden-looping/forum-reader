@@ -479,7 +479,9 @@
 
   // ---- Building the clean view ------------------------------------------
   const READER_CSS = `
-    html.fr-on body > *:not(#fr-reader) { display: none !important; }
+    html.fr-on body > *:not(#fr-reader), html.fr-on > *:not(head):not(body) { display: none !important; }
+    html.fr-on, html.fr-on body { width: 100% !important; min-width: 0 !important; max-width: 100% !important;
+      overflow-x: hidden !important; position: static !important; transform: none !important; }
     html.fr-on body { padding: 0 !important; margin: 0 !important; background: var(--fr-bg) !important; }
     html.fr-on { background: var(--fr-bg) !important; }
     #fr-reader { display: none; }
@@ -487,15 +489,16 @@
     #fr-reader {
       --fr-bg: #f7f5f0; --fr-card: #ffffff; --fr-text: #1d1d1f; --fr-muted: #6e6e73;
       --fr-line: #e3e0d8; --fr-accent: #0a66c2; --fr-quote: #f1efe9;
-      font: 17px/1.5 -apple-system, system-ui, sans-serif; color: var(--fr-text);
-      background: var(--fr-bg); padding: 12px 12px 40px; max-width: 760px; margin: 0 auto;
+      font: 16px/1.45 -apple-system, system-ui, sans-serif; color: var(--fr-text);
+      background: var(--fr-bg); padding: 12px 12px 110px; max-width: 760px; margin: 0 auto;
+      box-sizing: border-box; width: 100%;
       -webkit-text-size-adjust: 100%; overflow-wrap: anywhere;
     }
     @media (prefers-color-scheme: dark) {
       #fr-reader, html.fr-on body, html.fr-on { --fr-bg: #121214; --fr-card: #1c1c1f; --fr-text: #ececf0;
         --fr-muted: #9a9aa2; --fr-line: #2c2c31; --fr-accent: #5aa9ff; --fr-quote: #26262b; }
     }
-    #fr-reader h1 { font-size: 1.25em; line-height: 1.3; margin: 4px 4px 12px; }
+    #fr-reader h1 { font-size: 1.2em; line-height: 1.3; margin: 4px 4px 12px; }
     #fr-reader .fr-post, #fr-reader .fr-item { background: var(--fr-card); border: 1px solid var(--fr-line);
       border-radius: 12px; padding: 12px 14px; margin: 0 0 10px; }
     #fr-reader .fr-head { font-size: .82em; color: var(--fr-muted); margin-bottom: 6px; display: flex; gap: 8px; }
@@ -514,11 +517,18 @@
     #fr-reader .fr-body img { border-radius: 6px; }
     #fr-reader a { color: var(--fr-accent); }
     #fr-reader .fr-item a { display: block; font-weight: 600; text-decoration: none; color: var(--fr-text); }
+    #fr-reader * { box-sizing: border-box; }
+    #fr-reader h1 + .fr-chips { margin-top: -4px; }
+    #fr-reader .fr-chips { display: flex; gap: 6px; overflow-x: auto; margin: 0 0 12px; padding: 0 2px; -webkit-overflow-scrolling: touch; }
+    #fr-reader .fr-chips a { flex: none; padding: 6px 12px; border-radius: 16px; background: var(--fr-card); border: 1px solid var(--fr-line);
+      font-size: .85em; text-decoration: none; white-space: nowrap; }
+    #fr-reader .fr-cat { font-size: .8em; text-transform: uppercase; letter-spacing: .04em; color: var(--fr-muted); margin: 18px 6px 8px; }
+    #fr-reader .fr-board a { font-weight: 600; }
     #fr-reader .fr-item .fr-preview { font-size: .88em; color: var(--fr-muted); margin-top: 3px; display: -webkit-box;
       -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
     #fr-reader .fr-item .fr-meta { font-size: .8em; color: var(--fr-muted); margin-top: 3px; }
-    #fr-reader .fr-pages { display: flex; gap: 6px; align-items: center; justify-content: center; margin: 8px 0 14px; flex-wrap: wrap; }
-    #fr-reader .fr-pages a, #fr-reader .fr-pages span { padding: 7px 11px; border-radius: 9px; background: var(--fr-card);
+    #fr-reader .fr-pages { display: flex; gap: 6px; align-items: center; justify-content: center; margin: 8px 0 14px; flex-wrap: nowrap; }
+    #fr-reader .fr-pages a, #fr-reader .fr-pages span { white-space: nowrap; min-width: 40px; text-align: center; padding: 7px 11px; border-radius: 9px; background: var(--fr-card);
       border: 1px solid var(--fr-line); text-decoration: none; font-size: .9em; }
     #fr-reader .fr-pages span.fr-off { opacity: .35; }
     #fr-reader .fr-pages .fr-cur { border: none; background: none; color: var(--fr-muted); }
@@ -568,9 +578,94 @@
     if (!p || p.last <= 1) return null;
     const bar = el('div', 'fr-pages');
     const btn = (label, href) => href ? `<a href="${esc(href)}">${label}</a>` : `<span class="fr-off">${label}</span>`;
-    bar.innerHTML = btn('«', p.first) + btn('‹ Prev', p.prev) +
-      `<span class="fr-cur">Page ${p.current} of ${p.last}</span>` + btn('Next ›', p.next) + btn('»', p.lastHref);
+    bar.innerHTML = btn('«', p.first) + btn('‹', p.prev) +
+      `<span class="fr-cur">Page ${p.current} of ${p.last}</span>` + btn('›', p.next) + btn('»', p.lastHref);
     return bar;
+  }
+
+
+  // ---- Board index (the list of forums) ------------------------------------
+  // Works across platforms by recognising links to boards, then grouping them
+  // under the nearest category heading.
+  const BOARD_RE = [
+    /\/jforum\/forums\/show\/\d+\.page/,          // JForum
+    /\/forums\/[^/?#]*\.\d+\/?(?:[?#]|$)/,        // XenForo
+    /\/forum\/\d+-[^/?#]*\/?(?:[?#]|$)/,          // Invision
+    /viewforum\.php\?(?:.*&)?f=\d+/,              // phpBB
+    /forumdisplay\.php/,                          // vBulletin
+    /[?&]board=\d+/,                              // SMF
+  ];
+  const boardKey = href => {
+    try {
+      const u = new URL(href, location.href);
+      if (u.origin !== location.origin) return null;
+      const s = u.pathname.replace(/;jsessionid=[^/]*/i, '') + u.search;
+      if (/[?&](page|start)=|\/page-\d+|\/page\/\d+|\/show\/\d+\/\d+\.page/.test(s)) return null; // page links of a board
+      return BOARD_RE.some(r => r.test(s)) ? s.replace(/[?#].*$/, m => m.startsWith('?') ? m.replace(/#.*/, '') : '') : null;
+    } catch (e) { return null; }
+  };
+  // The visible text pieces inside an element, one per text node.
+  const textChunks = root => {
+    const out = [], w = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+    let n;
+    while ((n = w.nextNode())) {
+      if (n.parentElement && n.parentElement.closest('script, style, noscript')) continue;
+      const t = n.nodeValue.replace(/\s+/g, ' ').trim();
+      if (t) out.push(t);
+    }
+    return out;
+  };
+  const isHeading = e => /^H[1-6]$/.test(e.tagName) ||
+    /(^|\s)(block-header|ipsBox__header|catbg|category-title|forabg|cat-header|forumcategory)(\s|$)/i.test(e.className || '');
+
+  function boardIndex() {
+    const links = $$('a[href]').filter(a => text(a));
+    const seen = new Set(), rows = [];
+    for (const a of links) {
+      const key = boardKey(a.href);
+      if (!key || seen.has(key) || text(a).length < 2 || /^\d+$/.test(text(a))) continue;
+      if (a.closest('nav, header, footer, .breadcrumb, .p-breadcrumbs, .ipsBreadcrumb, [class*="breadcrumb" i], select, #fr-reader')) continue;
+      seen.add(key);
+      // The row: the largest ancestor that still only points at this board.
+      let row = a;
+      while (row.parentElement && row.parentElement !== document.body) {
+        const keys = new Set($$('a[href]', row.parentElement).map(x => boardKey(x.href)).filter(Boolean));
+        if (keys.size > 1) break;
+        row = row.parentElement;
+      }
+      const desc = firstText(row, ['.node-description', '.ipsData__desc', '.forum-description', '.forumdesc', '.description', '[class*="desc" i]']) ||
+        textChunks(row).filter(l => l !== text(a) && !a.textContent.includes(l) && l.length >= 15 &&
+          !/^[\d,.\s]+$/.test(l) && !/\d{1,2}[:/]\d{2}/.test(l))[0] || '';
+      rows.push({ a, title: text(a), href: a.href, desc: desc.slice(0, 160) });
+    }
+    if (rows.length < 3) return null;
+    // Category for each row: the last heading before it in document order.
+    const headings = $$('h1, h2, h3, h4, h5, h6, .block-header, .ipsBox__header, .catbg, .category-title, li.header dt, .forabg .header dt')
+      .filter(h => !h.closest('#fr-reader') && text(h) && text(h).length < 80 && text(h) !== pageTitle());
+    rows.forEach(r => {
+      let cat = '';
+      for (const h of headings) {
+        if (h.compareDocumentPosition(r.a) & Node.DOCUMENT_POSITION_FOLLOWING) cat = text(h); else break;
+      }
+      r.cat = cat;
+    });
+    return rows;
+  }
+
+  // Links to the site's own "recent / new posts" views, shown as chips.
+  function viewLinks() {
+    const re = /^(recent topics|hottest topics|active topics|new posts|what's new|latest activity|unread|unread posts|unanswered( topics| posts)?|today's posts|new topics|latest topics|recent posts)$/i;
+    const out = [], seen = new Set();
+    for (const a of $$('a[href]')) {
+      const t = text(a);
+      if (!re.test(t) || a.closest('#fr-reader') || !isRealLink(a)) continue;
+      const k = t.toLowerCase();
+      if (seen.has(k)) continue;
+      seen.add(k);
+      out.push({ title: t, href: a.href });
+      if (out.length >= 5) break;
+    }
+    return out;
   }
 
   function pageTitle() {
@@ -590,6 +685,8 @@
       try { items = (a.list() || []).filter(Boolean); } catch (e) {}
       if (items.length >= 3) return { adapter: a.name, kind: 'list', items };
     }
+    const boards = boardIndex();
+    if (boards) return { adapter: 'index', kind: 'index', items: boards };
     return null;
   }
 
@@ -599,10 +696,26 @@
     const root = el('div');
     root.id = 'fr-reader';
     root.appendChild(el('h1', null, esc(pageTitle())));
-    const pages = pagination();
+    const pages = found.kind === 'index' ? null : pagination();
+    if (found.kind !== 'thread') {
+      const views = viewLinks().filter(v => v.href.split('#')[0].replace(/;jsessionid=[^?#]*/i, '') !==
+                                         location.href.split('#')[0].replace(/;jsessionid=[^?#]*/i, ''));
+      if (views.length) {
+        const chips = el('div', 'fr-chips');
+        chips.innerHTML = views.map(v => `<a href="${esc(v.href)}">${esc(v.title)}</a>`).join('');
+        root.appendChild(chips);
+      }
+    }
     const top = pagesBar(pages);
     if (top) root.appendChild(top);
-    if (found.kind === 'thread') {
+    if (found.kind === 'index') {
+      let cat = null;
+      found.items.forEach(it => {
+        if (it.cat && it.cat !== cat) { root.appendChild(el('h2', 'fr-cat', esc(it.cat))); cat = it.cat; }
+        root.appendChild(el('div', 'fr-item fr-board', `<a href="${esc(it.href)}">${esc(it.title)}</a>` +
+          (it.desc ? `<div class="fr-preview">${esc(it.desc)}</div>` : '')));
+      });
+    } else if (found.kind === 'thread') {
       const numbered = !(pages && pages.current > 1);
       found.posts.forEach((p, i) => {
         const card = el('article', 'fr-post');
@@ -629,7 +742,7 @@
     }
     const bottom = pagesBar(pages);
     if (bottom) root.appendChild(bottom);
-    try { found.kind === 'thread' ? trackThread(root, found, pages) : trackList(root, found); } catch (e) {}
+    try { if (found.kind === 'thread') trackThread(root, found, pages); else if (found.kind === 'list') trackList(root, found); } catch (e) {}
     if (found.kind === 'thread') try { addReplySection(root); } catch (e) {}
     const orig = el('a', 'fr-orig', 'Show original page');
     orig.href = '#';
@@ -685,8 +798,11 @@
     }
   };
 
+  const reveal = () => document.documentElement.classList.remove('fr-pending');
+  setTimeout(reveal, 2500); // never leave a page hidden
   const start = () => {
     FR.run();
+    reveal();
     // Some sites finish rendering after load; try once more if nothing matched.
     if (!FR.result) setTimeout(() => FR.run(), 1500);
   };
