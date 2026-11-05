@@ -75,6 +75,33 @@
       })
     },
     {
+      // groups.io email lists (also on custom domains like groups.jewishgen.org)
+      name: 'groupsio',
+      test: () => /^\/g\//.test(location.pathname) && !!$('.expanded-message, a.subject[href*="/topic/"]'),
+      thread: () => $$('.expanded-message').map(m => {
+        const when = $('.expanded-sender-meta span[title]', m);
+        return {
+          author: firstText(m, ['.user-chip-name', 'h3.visually-hidden']),
+          date: when ? when.getAttribute('title') : '',
+          body: $('.user-content', m),
+          quote: null
+        };
+      }),
+      list: () => $$('tr').map(r => {
+        const a = $('a.subject[href*="/topic/"]', r);
+        if (!a) return null;
+        const msgs = count(text($('.subject .badge', r)));
+        const times = $$('.thread-attribution span[title]', r);
+        const last = times.length ? times[times.length - 1].getAttribute('title') : '';
+        const by = text($('.thread-attribution', r)).replace(/^(Started by|By)\s*/i, '').split(/\s+@|\s+·/)[0].replace(/^Started by\s*/i, '').replace(/^By\s*/i, '');
+        return {
+          title: text(a), href: a.href, n: msgs != null ? msgs - 1 : null, unread: false,
+          preview: text($('.truncate-one-line', r)),
+          meta: [by, msgs != null ? msgs + (msgs === 1 ? ' message' : ' messages') : '', last ? 'last: ' + last : ''].filter(Boolean).join(' · ')
+        };
+      })
+    },
+    {
       name: 'xenforo',
       test: () => document.documentElement.id === 'XF' || !!$('.p-body-inner, article.message--post'),
       thread: () => $$('article.message--post, article.message').map(a => ({
@@ -241,7 +268,7 @@
       } catch (e) {}
     }
   };
-  const DEFAULT_PER = { jforum: 15, xenforo: 20, invision: 25, phpbb: 25, vb: 20, smf: 20 };
+  const DEFAULT_PER = { groupsio: 20, jforum: 15, xenforo: 20, invision: 25, phpbb: 25, vb: 20, smf: 20 };
 
   // Which thread a URL points at, independent of page: {id, kind, base, page|offset}.
   function threadRef(href) {
@@ -253,6 +280,8 @@
       return { id: 'j' + m[3], kind: 'jforum', origin: o, prefix: m[1], tid: m[3], offset: m[2] ? +m[2] : 0 };
     if ((m = p.match(/^(.*\/threads\/(?:[^/]*\.)?(\d+))(?:\/(?:page-(\d+))?)?\/?$/)))
       return { id: 'x' + m[2], kind: 'xenforo', origin: o, base: m[1], page: m[3] ? +m[3] : 1 };
+    if ((m = p.match(/^(.*\/g\/[^/]+\/topic\/[^/]+\/(\d+))\/?$/)))
+      return { id: 'g' + m[2], kind: 'groupsio', origin: o, base: m[1], page: +(q.get('page') || 1) };
     if ((m = p.match(/^(.*\/topic\/(\d+)[^/]*)(?:\/(?:page\/(\d+))?)?\/?$/)))
       return { id: 'i' + m[2], kind: 'invision', origin: o, base: m[1], page: m[3] ? +m[3] : 1 };
     if (/viewtopic\.php$/.test(p) && q.get('t'))
@@ -275,6 +304,7 @@
       case 'phpbb': return ref.origin + ref.base + (n > 1 ? '&start=' + off : '');
       case 'vb': return ref.origin + ref.base + (n > 1 ? '&page=' + n : '');
       case 'smf': return ref.origin + ref.base + '.' + off;
+      case 'groupsio': return ref.origin + ref.base + (n > 1 ? '?page=' + n : '');
     }
     return null;
   }
@@ -484,6 +514,8 @@
     #fr-reader .fr-body img { border-radius: 6px; }
     #fr-reader a { color: var(--fr-accent); }
     #fr-reader .fr-item a { display: block; font-weight: 600; text-decoration: none; color: var(--fr-text); }
+    #fr-reader .fr-item .fr-preview { font-size: .88em; color: var(--fr-muted); margin-top: 3px; display: -webkit-box;
+      -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
     #fr-reader .fr-item .fr-meta { font-size: .8em; color: var(--fr-muted); margin-top: 3px; }
     #fr-reader .fr-pages { display: flex; gap: 6px; align-items: center; justify-content: center; margin: 8px 0 14px; flex-wrap: wrap; }
     #fr-reader .fr-pages a, #fr-reader .fr-pages span { padding: 7px 11px; border-radius: 9px; background: var(--fr-card);
@@ -589,7 +621,9 @@
       });
     } else {
       found.items.forEach(it => {
-        const card = el('div', 'fr-item', `<a href="${esc(it.href)}">${esc(it.title)}</a>` + (it.meta ? `<div class="fr-meta">${esc(it.meta)}</div>` : ''));
+        const card = el('div', 'fr-item', `<a href="${esc(it.href)}">${esc(it.title)}</a>` +
+          (it.preview ? `<div class="fr-preview">${esc(it.preview)}</div>` : '') +
+          (it.meta ? `<div class="fr-meta">${esc(it.meta)}</div>` : ''));
         root.appendChild(card);
       });
     }

@@ -30,6 +30,9 @@ struct ForumBrowserView: View {
                     Menu {
                         Button { model.reload() } label: { Label("Reload", systemImage: "arrow.clockwise") }
                         Button { model.goHome() } label: { Label("Forum Home Page", systemImage: "house") }
+                        // For emailed sign-in links (groups.io and others): copy the
+                        // link in Mail, then open it here so the login lands in this app.
+                        Button { model.openCopiedLink() } label: { Label("Open Copied Link", systemImage: "link") }
                         if let url = model.url {
                             ShareLink(item: url) { Label("Share Link", systemImage: "square.and.arrow.up") }
                             Button { openURL(url) } label: { Label("Open in Safari", systemImage: "safari") }

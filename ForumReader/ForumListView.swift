@@ -93,7 +93,7 @@ struct ForumEditView: View {
                         .autocorrectionDisabled()
                     TextField("Name", text: $name, prompt: Text(url.map { Forum(name: "", url: $0).host } ?? "Optional"))
                 } footer: {
-                    Text("Use the page you'd want to start on, such as the forum's main list or a favorite board.")
+                    Text("Use the page you'd want to start on, such as the forum's main list or a favorite board. For a groups.io email list, use its Topics page, like groups.io/g/listname/topics.")
                 }
                 Section {
                     Toggle("Block ads", isOn: $blockAds)

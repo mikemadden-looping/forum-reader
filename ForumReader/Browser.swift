@@ -95,6 +95,13 @@ final class BrowserModel: NSObject, ObservableObject {
     func reload() { webView.reload() }
     func goHome() { webView.load(URLRequest(url: forum.url)) }
 
+    func openCopiedLink() {
+        let pb = UIPasteboard.general
+        let url = pb.url ?? pb.string.flatMap { URL(string: $0.trimmingCharacters(in: .whitespacesAndNewlines)) }
+        guard let url, let scheme = url.scheme?.lowercased(), scheme == "http" || scheme == "https" else { return }
+        webView.load(URLRequest(url: url))
+    }
+
     func setReader(_ on: Bool) {
         readerOn = on
         installScripts() // so later pages follow the new setting

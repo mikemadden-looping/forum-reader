@@ -39,7 +39,13 @@ The real site is always underneath, so logins, posting and Cloudflare's
 | JForum | DC Urban Moms and Dads | threads, topic lists |
 | Invision Community | American Weather | threads, topic lists (on invisioncommunity.com) |
 | XenForo | VW ID Talk and many hobby forums | topic lists |
+| groups.io | email lists, including custom domains like groups.jewishgen.org | threads (on groups.jewishgen.org) |
 | phpBB, vBulletin, SMF | older boards | not yet |
+
+For a groups.io list, add its Topics page (`groups.io/g/listname/topics`).
+Log in with your groups.io password. If you use the emailed sign-in link
+instead, copy the link in Mail and use **⋯ → Open Copied Link** in the app;
+tapping it in Mail would sign you in to Safari, not the app.
 
 Any other forum still gets ad blocking and text size; the reader button is
 greyed out on pages it doesn't recognise. To add a site, give `reader.js`
