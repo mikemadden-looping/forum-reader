@@ -24,11 +24,26 @@ struct Forum: Codable, Identifiable, Hashable {
     static func normalize(_ input: String) -> URL? {
         var s = input.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !s.isEmpty else { return nil }
+        if let list = emailList(s) { return list.url }
         if !s.lowercased().hasPrefix("http://") && !s.lowercased().hasPrefix("https://") {
             s = "https://" + s
         }
         guard let url = URL(string: s), let host = url.host(), host.contains(".") else { return nil }
         return url
+    }
+
+    /// An email group's address ("knitters@groups.io", "main@groups.jewishgen.org",
+    /// "group+subgroup@groups.io") becomes its groups.io Topics page.
+    static func emailList(_ input: String) -> (url: URL, name: String)? {
+        var s = input.trimmingCharacters(in: .whitespacesAndNewlines)
+        if s.lowercased().hasPrefix("mailto:") { s = String(s.dropFirst(7)) }
+        let parts = s.split(separator: "@", omittingEmptySubsequences: false)
+        guard parts.count == 2, !s.contains("/"), !s.contains(" ") else { return nil }
+        let local = String(parts[0]), domain = String(parts[1]).lowercased()
+        guard !local.isEmpty, domain.contains("."), !domain.hasPrefix("."), !domain.hasSuffix(".") else { return nil }
+        let path = local.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed.subtracting(CharacterSet(charactersIn: "/"))) ?? local
+        guard let url = URL(string: "https://\(domain)/g/\(path)/topics") else { return nil }
+        return (url, local)
     }
 }
 

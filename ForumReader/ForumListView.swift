@@ -86,14 +86,14 @@ struct ForumEditView: View {
         NavigationStack {
             Form {
                 Section {
-                    TextField("Web address", text: $address, prompt: Text("dcurbanmom.com/jforum"))
-                        .keyboardType(.URL)
+                    TextField("Web address or group email", text: $address, prompt: Text("dcurbanmom.com/jforum"))
+                        .keyboardType(.asciiCapable) // needs both "/" and "@"
                         .textContentType(.URL)
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
-                    TextField("Name", text: $name, prompt: Text(url.map { Forum(name: "", url: $0).host } ?? "Optional"))
+                    TextField("Name", text: $name, prompt: Text(Forum.emailList(address)?.name ?? url.map { Forum(name: "", url: $0).host } ?? "Optional"))
                 } footer: {
-                    Text("Use the page you'd want to start on, such as the forum's main list or a favorite board. For a groups.io email list, use its Topics page, like groups.io/g/listname/topics.")
+                    Text("Use the page you'd want to start on, such as the forum's main list or a favorite board. For a groups.io email group, just enter the group's email address, like knitters@groups.io.")
                 }
                 Section {
                     Toggle("Block ads", isOn: $blockAds)
@@ -112,7 +112,7 @@ struct ForumEditView: View {
                         var f = forum ?? Forum(name: name, url: url)
                         if f.url != url { f.lastURL = nil }
                         f.url = url
-                        f.name = name
+                        f.name = name.trimmingCharacters(in: .whitespaces).isEmpty ? (Forum.emailList(address)?.name ?? "") : name
                         f.blockAds = blockAds
                         f.cleanView = cleanView
                         onSave(f)
