@@ -432,6 +432,7 @@
       section.appendChild(el('h2', null, 'Reply'));
       replySlot = el('div', 'fr-replyform');
       section.appendChild(replySlot);
+      simplifyForm(form);
       formHome = document.createComment('fr-form-home');
       form.parentNode.insertBefore(formHome, form);
       movedForm = form;
@@ -455,6 +456,83 @@
   }
 
   // On a reply or quote page, show just the posting form, with a Cancel link.
+
+  // A post's HTML as BBCode, for quoting into a reply box. Handles DCUM-style
+  // nested quotes (<blockquote><cite>Name wrote:</cite>...), line breaks,
+  // bold/italic/underline, links and images.
+  function toBBCode(node) {
+    const walk = n => {
+      if (n.nodeType === 3) return n.nodeValue.replace(/[ \t\r\n]+/g, ' ');
+      if (n.nodeType !== 1) return '';
+      const tag = n.tagName;
+      if (/^(SCRIPT|STYLE|NOSCRIPT|INPUT|BUTTON|SELECT|CITE)$/.test(tag)) return '';
+      const inner = () => Array.from(n.childNodes).map(walk).join('');
+      switch (tag) {
+        case 'BR': return '\n';
+        case 'BLOCKQUOTE': {
+          const cite = n.querySelector(':scope > cite, :scope > div > cite, :scope > .posttext > cite');
+          const who = cite ? cite.textContent.replace(/\s*wrote:?\s*$/i, '').trim() : '';
+          return `\n[quote${who ? '=' + who : ''}]${inner().trim()}[/quote]\n`;
+        }
+        case 'B': case 'STRONG': return `[b]${inner()}[/b]`;
+        case 'I': case 'EM': return `[i]${inner()}[/i]`;
+        case 'U': return `[u]${inner()}[/u]`;
+        case 'A': {
+          const href = n.getAttribute('href') || '', t = inner();
+          if (!href || /^(#|javascript:)/i.test(href)) return t;
+          return t.trim() === href ? `[url]${href}[/url]` : `[url=${n.href}]${t}[/url]`;
+        }
+        case 'IMG': {
+          const alt = n.getAttribute('alt') || '';
+          if (/smil|emoticon|emoji/i.test(n.getAttribute('src') || '') && alt) return alt;
+          return n.src ? `[img]${n.src}[/img]` : '';
+        }
+        case 'DIV': case 'P': case 'LI': case 'TR': return inner() + '\n';
+        default: return inner();
+      }
+    };
+    return walk(node).replace(/[ \t]+\n/g, '\n').replace(/\n[ \t]+/g, '\n').replace(/\n{3,}/g, '\n\n').trim();
+  }
+
+  // The reply box that's been moved into the clean view, if any.
+  const inlineReplyBox = () => replySlot && movedForm && replySlot.contains(movedForm) ? $('textarea', movedForm) : null;
+
+  function quoteIntoReply(author, bodyEl) {
+    const box = inlineReplyBox();
+    if (!box) return false;
+    const q = `[quote${author ? '=' + author : ''}]${toBBCode(bodyEl)}[/quote]\n\n`;
+    const before = box.value.replace(/\s+$/, '');
+    box.value = (before ? before + '\n\n' : '') + q;
+    box.dispatchEvent(new Event('input', { bubbles: true }));
+    box.scrollIntoView({ block: 'center' });
+    setTimeout(() => { box.focus(); box.setSelectionRange(box.value.length, box.value.length); }, 250);
+    return true;
+  }
+
+  // Strip a posting form down to what's needed to write and send a post:
+  // the message box, a subject line, the send/preview buttons, and anything
+  // that looks like a captcha. Toolbars, colour/font pickers, smilies and
+  // option checkboxes are hidden (they still submit their defaults).
+  function simplifyForm(form) {
+    const keep = 'textarea, input[name*="subject" i], input[type="submit"], button[type="submit"], button:not([type]), ' +
+      'iframe, [class*="captcha" i], [id*="captcha" i], [class*="turnstile" i], [data-sitekey]';
+    const isAction = e => /^(INPUT|BUTTON)$/.test(e.tagName) && /submit|post|send|reply|preview/i.test(e.value || e.textContent || '') &&
+      !/^(checkbox|radio|hidden)$/i.test(e.type || '');
+    const keepEl = e => e.matches(keep) || isAction(e);
+    const contains = e => !!e.querySelector(keep) || $$('input, button', e).some(isAction);
+    const visit = parent => {
+      for (const c of Array.from(parent.children)) {
+        if (c.tagName === 'SCRIPT' || (c.tagName === 'INPUT' && c.type === 'hidden')) continue;
+        if (keepEl(c)) continue;
+        if (contains(c)) visit(c); else c.classList.add('fr-hide');
+      }
+    };
+    visit(form);
+    form.classList.add('fr-simpleform');
+    const subj = $('input[name*="subject" i]', form);
+    if (subj && !subj.placeholder) subj.placeholder = 'Subject';
+  }
+
   function compose() {
     const form = findPostForm();
     // Only on pages that are about writing a post, so a stray form elsewhere
@@ -466,6 +544,7 @@
       n = n.parentNode;
     }
     form.classList.add('fr-composeform');
+    simplifyForm(form);
     const bar = el('div', 'fr-composebar', `<b>${esc(pageTitle())}</b>`);
     const cancel = el('a', null, 'Cancel');
     cancel.href = '#';
@@ -547,7 +626,19 @@
     #fr-reader .fr-replyform input[type="submit"], html.fr-compose .fr-composeform input[type="submit"],
     html.fr-compose .fr-composeform button[type="submit"] { -webkit-appearance: none; font: 600 16px -apple-system, system-ui, sans-serif;
       padding: 10px 22px; border-radius: 10px; border: none; background: var(--fr-accent); color: #fff; margin-top: 10px; }
-    html.fr-compose .fr-hide { display: none !important; }
+    html.fr-compose .fr-hide, html.fr-on #fr-reader .fr-hide { display: none !important; }
+    html.fr-compose .fr-simpleform, html.fr-compose .fr-simpleform table, html.fr-compose .fr-simpleform tbody,
+    html.fr-compose .fr-simpleform tr, html.fr-compose .fr-simpleform td, html.fr-compose .fr-simpleform th,
+    #fr-reader .fr-simpleform table, #fr-reader .fr-simpleform tbody, #fr-reader .fr-simpleform tr,
+    #fr-reader .fr-simpleform td, #fr-reader .fr-simpleform th { display: block; width: auto !important; padding: 0; border: 0; background: none; }
+    html.fr-compose .fr-simpleform input[name*="subject" i], #fr-reader .fr-simpleform input[name*="subject" i] {
+      width: 100% !important; box-sizing: border-box; font: 16px -apple-system, system-ui, sans-serif; padding: 9px 10px;
+      border-radius: 9px; border: 1px solid var(--fr-line); background: var(--fr-bg); color: var(--fr-text); margin-bottom: 8px; }
+    html.fr-compose .fr-simpleform input[type="button"], html.fr-compose .fr-simpleform input[type="submit"],
+    #fr-reader .fr-simpleform input[type="button"] { -webkit-appearance: none; font: 600 16px -apple-system, system-ui, sans-serif;
+      padding: 10px 18px; border-radius: 10px; border: 1px solid var(--fr-line); background: var(--fr-card); color: var(--fr-accent);
+      margin: 10px 8px 0 0; display: inline-block; }
+    html.fr-compose .fr-simpleform input[type="submit"] { background: var(--fr-accent); color: #fff; border: none; }
     html.fr-compose, html.fr-compose body { background: var(--fr-bg) !important; }
     html.fr-compose body { margin: 0 !important; padding: 12px !important; }
     html.fr-compose .fr-composeform textarea { min-height: 45vh; }
@@ -722,13 +813,16 @@
         // Numbers are made thread-wide by trackThread when it knows the page size.
         card.appendChild(el('div', 'fr-head',
           `<b>${esc(p.author || 'Unknown')}</b><span>${esc(p.date || '')}</span><span class="fr-num">${numbered ? '#' + (i + 1) : ''}</span>`));
+        const body = el('div', 'fr-body');
+        body.appendChild(cleanBody(p.body));
         if (isRealLink(p.quote)) {
           const q = el('a', 'fr-quote', 'Quote');
           q.href = p.quote.href;
+          // With the reply box on this page, quote into it instead of going
+          // to the site's separate quote page.
+          q.addEventListener('click', e => { if (quoteIntoReply(p.author, body)) e.preventDefault(); });
           card.firstChild.appendChild(q);
         }
-        const body = el('div', 'fr-body');
-        body.appendChild(cleanBody(p.body));
         card.appendChild(body);
         root.appendChild(card);
       });
